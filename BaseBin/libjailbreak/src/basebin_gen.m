@@ -124,11 +124,13 @@ int basebin_generate(bool comingFromJBUpdate)
 		// Delete the dyld inside .fakelib
 		[[NSFileManager defaultManager] removeItemAtPath:fakelibDyldPath error:nil];
 
-		// Symlink .fakelib/dyld -> /var/jb/basebin/gen/dyld
-		[[NSFileManager defaultManager] createSymbolicLinkAtPath:fakelibDyldPath withDestinationPath:dyldPatchedPath error:nil];
+		// Symlink .fakelib/dyld -> /var/jb/basebin/gen/dyld -> COPY
+		// [[NSFileManager defaultManager] createSymbolicLinkAtPath:fakelibDyldPath withDestinationPath:dyldPatchedPath error:nil];
+		// carbonCopy(dyldPatchedPath, fakelibDyldPath);
 
-		// Symlink .fakelib/systemhook.dylib -> /var/jb/basebin/systemhook.dylib
-		[[NSFileManager defaultManager] createSymbolicLinkAtPath:fakelibSystemHookPath withDestinationPath:systemhookPath error:nil];
+		// Symlink .fakelib/systemhook.dylib -> /var/jb/basebin/systemhook.dylib -> copy
+		// [[NSFileManager defaultManager] createSymbolicLinkAtPath:fakelibSystemHookPath withDestinationPath:systemhookPath error:nil];
+        carbonCopy(systemhookPath, fakelibSystemHookPath);
 
 		// Backup original dyld
 		carbonCopy(@"/usr/lib/dyld", dyldOrigPath);
@@ -154,5 +156,12 @@ int basebin_generate(bool comingFromJBUpdate)
 	}
 
 	[[NSFileManager defaultManager] moveItemAtPath:dyldInflightPath toPath:dyldPatchedPath error:nil];
+
+	// --- HYBRID FIX: COPY GENERATED DYLD (NO SYMLINK) ---
+    // Overwrite the .fakelib dyld with the real patched file we just generated
+    if ([[NSFileManager defaultManager] fileExistsAtPath:fakelibDyldPath]) {
+        [[NSFileManager defaultManager] removeItemAtPath:fakelibDyldPath error:nil];
+    }
+    carbonCopy(dyldPatchedPath, fakelibDyldPath);
 	return 0;
 }
