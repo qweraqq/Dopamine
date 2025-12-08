@@ -79,6 +79,8 @@ __attribute__((constructor)) static void initializer(void)
 	initIPCHooks();
 	initJetsamHook();
 
+	/*
+	 * removal of DOPAMINE_IS_HIDDEN check (since we are not using 2.4 hiding)
 	if (getenv("DOPAMINE_IS_HIDDEN") != 0) {
 		// If the jailbreak is currently hidden, fakelib had to be mounted again before the userspace reboot
 		// Now that the userspace reboot is over, we can unmount it again
@@ -95,6 +97,13 @@ __attribute__((constructor)) static void initializer(void)
 		// No need to keep this around
 		unsetenv("DOPAMINE_IS_HIDDEN");
 	}
+	*/
+
+	// CRITICAL FIX: Manually set library path since dyldhook is gone
+    // This allows sh and other tools to find libs in /var/jb/usr/lib
+	char fallbackPath[PATH_MAX];
+    snprintf(fallbackPath, sizeof(fallbackPath), "%s:/usr/lib", JBROOT_PATH("/usr/lib"));
+    setenv("DYLD_FALLBACK_LIBRARY_PATH", fallbackPath, 1);
 
 	// This will ensure launchdhook is always reinjected after userspace reboots
 	// As this launchd will pass environ to the next launchd...
