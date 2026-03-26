@@ -3,6 +3,9 @@
 
 #include <libjailbreak/codesign.h>
 #include <libjailbreak/libjailbreak.h>
+#include <libjailbreak/kernel.h>
+#include <libjailbreak/primitives.h>
+#include <libjailbreak/info.h>
 
 extern void systemwide_domain_set_enabled(bool enabled);
 
@@ -15,6 +18,65 @@ static bool platform_domain_allowed(audit_token_t clientToken)
 }
 
 int platform_clear_process_noattach(uint64_t pid, bool preflight, bool hideTraced)
+{
+    // 1. Safely resolve the target process
+    uint64_t proc = proc_find(pid);
+    if (!proc) return -1;
+    
+    // UAF Mitigation: Verify the PID matches
+    off_t off_pid = koffsetof(proc, pid);
+    if (kread32(proc + off_pid) != (uint32_t)pid) return -1;
+
+    // Calculate the exact kernel virtual address of proc->p_lflag
+    uint64_t flag_ptr = proc + koffsetof(proc, flag) + sizeof(uint32_t);
+    
+    // Resolve our atomic kernel functions from the jailbreak info
+    uint64_t kaddr_OSBitAndAtomic = jbinfo_get_symbol("OSBitAndAtomic");
+    uint64_t kaddr_OSBitOrAtomic  = jbinfo_get_symbol("OSBitOrAtomic");
+    
+    if (!kaddr_OSBitAndAtomic || !kaddr_OSBitOrAtomic) {
+        // Fallback to the unsafe method if patchfinder failed, or abort
+        return platform_clear_process_noattach_fallback(pid, preflight, hideTraced); 
+    }
+
+    if (preflight) {
+        // PRE-FLIGHT: We want to clear P_LNOATTACH and set P_LCLEARED_NOATTACH
+        
+        // 1st kcall: Atomic AND to clear P_LNOATTACH
+        // Equivalent to: OSBitAndAtomic(~P_LNOATTACH, flag_ptr);
+        kcall(kaddr_OSBitAndAtomic, 2, (uint64_t)(~P_LNOATTACH), flag_ptr);
+        
+        // 2nd kcall: Atomic OR to set our secret marker
+        // Equivalent to: OSBitOrAtomic(P_LCLEARED_NOATTACH, flag_ptr);
+        kcall(kaddr_OSBitOrAtomic, 2, (uint64_t)P_LCLEARED_NOATTACH, flag_ptr);
+        
+    } else {
+        // POST-FLIGHT: Restore original state and hide P_LTRACED
+        
+        // Check if our secret marker is present (safe to use standard kread32 for a check)
+        uint32_t current_flag = kread32(flag_ptr);
+        
+        if ((current_flag & P_LCLEARED_NOATTACH) != 0) {
+            // Atomic AND to clear our secret marker
+            kcall(kaddr_OSBitAndAtomic, 2, (uint64_t)(~P_LCLEARED_NOATTACH), flag_ptr);
+            
+            // Atomic OR to restore the app's original PT_DENY_ATTACH state
+            kcall(kaddr_OSBitOrAtomic, 2, (uint64_t)P_LNOATTACH, flag_ptr);
+        }
+        
+        if (hideTraced) {
+            // Atomic AND to clear the P_LTRACED flag set by the kernel during attach
+            kcall(kaddr_OSBitAndAtomic, 2, (uint64_t)(~P_LTRACED), flag_ptr);
+        }
+    }
+    
+    // Final UAF check to ensure we didn't operate on a reassigned struct
+    if (kread32(proc + off_pid) != (uint32_t)pid) return -1;
+
+    return 0;
+}
+
+int platform_clear_process_noattach_fallback(uint64_t pid, bool preflight, bool hideTraced)
 {
     uint64_t proc = proc_find(pid);
     if (!proc) return -1;
